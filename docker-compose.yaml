@@ -13,31 +13,7 @@ services:
     networks:
       - kong-ee
 
-  #authservice:
-  #  networks:
-  #    - kong-ee
-  #  image: aldredb/auth-service:v1
-  #  container_name: authservice
-  #  hostname: authservice
-  #  restart: on-failure
-  #  ports:
-  # 30000 - macOS listen port
-  # 3000 - container port
-  #    - "30000:3000/tcp"
-  #  environment:
-  #    - TOKENS=token1,token2,token3
-  #    - CUSTOMERS=customer1,customer2,customer3
-  # httpbin:
-  # networks:
-  #- kong-ee
-  # image: kong/httpbin:latest
-  # container_name: httpbin
-  # hostname: httpbin.org
-  # restart: on-failure
-  # ports:
-  # 8080 - macOS listen port
-  # 80 - container port
-  # - "8080:80/tcp"
+ 
   postgres:
     image: postgres:13
     restart: always
