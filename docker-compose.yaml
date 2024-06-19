@@ -1,0 +1,212 @@
+version: "3"
+volumes:
+  kong_data:
+    driver: local
+services:
+  authservice:
+    build:
+      context: ./authservice
+      dockerfile: Dockerfile
+    container_name: authservice
+    ports:
+      - "8080:8080"
+    networks:
+      - kong-ee
+
+  #authservice:
+  #  networks:
+  #    - kong-ee
+  #  image: aldredb/auth-service:v1
+  #  container_name: authservice
+  #  hostname: authservice
+  #  restart: on-failure
+  #  ports:
+  # 30000 - macOS listen port
+  # 3000 - container port
+  #    - "30000:3000/tcp"
+  #  environment:
+  #    - TOKENS=token1,token2,token3
+  #    - CUSTOMERS=customer1,customer2,customer3
+  # httpbin:
+  # networks:
+  #- kong-ee
+  # image: kong/httpbin:latest
+  # container_name: httpbin
+  # hostname: httpbin.org
+  # restart: on-failure
+  # ports:
+  # 8080 - macOS listen port
+  # 80 - container port
+  # - "8080:80/tcp"
+  postgres:
+    image: postgres:13
+    restart: always
+    container_name: kong-postgres
+    networks:
+      - kong-ee
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    environment:
+      POSTGRES_USER: kong
+      POSTGRES_PASSWORD: kong
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: kong
+    volumes:
+      - kong_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432/tcp"
+  #Running the migrations here
+  kong-migrations:
+    image: kong/kong-gateway:3.7.0.0
+    container_name: kong-migrations
+    command: kong migrations bootstrap
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PASSWORD: admin
+      KONG_PG_DATABASE: ${KONG_PG_DATABASE:-kong}
+      KONG_PG_HOST: kong-postgres
+      KONG_PG_PASSWORD: ${KONG_PG_PASSWORD:-kong}
+      KONG_PG_USER: ${KONG_PG_USER:-kong}
+    links:
+      - postgres:postgres
+    networks:
+      - kong-ee
+    restart: on-failure
+  kong:
+    image: kong/kong-gateway:3.7.0.0
+    user: kong
+    container_name: kong
+    networks:
+      - kong-ee
+    depends_on:
+      - kong-migrations
+    restart: on-failure
+    ports:
+      - "8000-8006:8000-8006/tcp"
+      - "8100:8100/tcp"
+      - "8443-8447:8443-8447/tcp"
+      - "9080:9080/tcp"
+    environment:
+      KONG_LICENSE_DATA: ${KONG_LICENSE_DATA}
+
+      ## GENERAL
+      KONG_AUDIT_LOG: on
+      KONG_LOG_LEVEL: debug
+      # KONG_ADMIN_ACCESS_LOG: /srv/shared/logs/admin_access.log
+      # KONG_ADMIN_ERROR_LOG: /srv/shared/logs/admin_error.log
+      # KONG_STATUS_ACCESS_LOG: /srv/shared/logs/status_access.log
+      # KONG_STATUS_ERROR_LOG: /srv/shared/logs/status_error.log
+      KONG_PLUGINS: bundled,myplugin
+
+      ## NGINX
+      KONG_PROXY_LISTEN: "0.0.0.0:8000"
+      KONG_STREAM_LISTEN: "0.0.0.0:5555 reuseport backlog=65536, 0.0.0.0:5556 reuseport backlog=65536"
+      # KONG_ADMIN_API_URI: https://ald-local-ee.kong-lab-20.net:8444
+      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+      KONG_STATUS_LISTEN: "0.0.0.0:8100"
+      KONG_NGINX_WORKER_PROCESSES: 1
+
+      ## DATASTORE
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-postgres
+      KONG_PG_USER: ${KONG_PG_USER:-kong}
+      KONG_PG_PASSWORD: ${KONG_PG_PASSWORD:-kong}
+
+      ## KONG MANAGER
+      KONG_ADMIN_GUI_LISTEN: "0.0.0.0:8002"
+      ## No need to specify. Let
+      ## Kong Manager will use the window request host and append the resolved listener port depending on the requested protocol
+      ## Ultimately used to set the origins accepted by the admin-api.
+      KONG_ADMIN_GUI_URL: http://localhost:8002
+      KONG_ADMIN_GUI_API_URL: http://localhost:8001
+      # The SSL cert and key settings are removed or commented out
+      # KONG_ADMIN_GUI_SSL_CERT: /srv/shared/server-ssl/fullchain1.pem
+      # KONG_ADMIN_GUI_SSL_CERT_KEY: /srv/shared/server-ssl/privkey1.pem
+      # KONG_ADMIN_GUI_ACCESS_LOG: /srv/shared/logs/admingui_access.log
+      # KONG_ADMIN_GUI_ERROR_LOG: /srv/shared/logs/admingui_error.log
+      # KONG_ADMIN_GUI_AUTH: openid-connect
+      ## For logout, refer to https://konghq.atlassian.net/browse/FTI-2251
+      ## authorization_query will add ?prompt=login as query string in the /auth endpoint to keycloak
+      ## This will cause Kong Manager to always trigger re-login
+      ## Add these:
+      ## "authorization_query_args_names": ["prompt"],
+      ## "authorization_query_args_values": ["login"],
+      # KONG_ADMIN_GUI_AUTH_CONF: >
+      #     {
+      #       "issuer": "https://ald-keycloak.kong-lab-20.net/auth/realms/master",
+      #       "admin_claim": "preferred_username",
+      #       "client_id": ["kong-ee"],
+      #       "client_secret": ["suWsSZ18p3hGATXIdXxVJMtNukYm8geE"],
+      #       "authenticated_groups_claim": ["groups"],
+      #       "ssl_verify": false,
+      #       "leeway": 60,
+      #       "redirect_uri": ["https://ald-local-ee.kong-lab-20.net:8445"],
+      #       "logout_methods": ["POST", "GET", "DELETE"],
+      #       "logout_redirect_uri": ["https://ald-local-ee.kong-lab-20.net:8445"],
+      #       "scopes": ["openid","profile","email"],
+      #       "auth_methods": ["authorization_code"],
+      #       "admin_auto_create_rbac_token_disabled": false,
+      #       "admin_auto_create": true
+      #     }
+      # KONG_ADMIN_GUI_SESSION_CONF: '{"cookie_name":"admin_session","cookie_samesite":"off","secret":"Y29vbGJlYW5z","cookie_secure":false,"storage":"kong"}'
+
+      ## VITALS
+      KONG_VITALS: "on"
+      KONG_VITALS_STRATEGY: prometheus
+      KONG_VITALS_STATSD_ADDRESS: statsd:9125
+      KONG_VITALS_TSDB_ADDRESS: prometheus:9090
+
+      ## DEVELOPER PORTAL
+
+      ## DEVELOPER PORTAL AUTHENTICATION
+      # KONG_PORTAL_AUTH: openid-connect
+      # KONG_PORTAL_SESSION_CONF: '{ "cookie_name": "portal_session", "secret": "Y29vbGJlYW5z", "storage": "kong", "cookie_secure": false }'
+      # KONG_PORTAL_AUTH_CONF: >
+      #     {
+      #       "consumer_by": ["username","custom_id","id"],
+      #       "leeway": 1000,
+      #       "scopes": ["openid","profile","email","offline_access"],
+      #       "logout_query_arg": "logout",
+      #       "client_id": ["kong-ee"],
+      #       "login_redirect_uri": ["https://ald-local-ee.kong-lab-20.net:8446/default"],
+      #       "login_action": "redirect",
+      #       "logout_redirect_uri": ["https://ald-local-ee.kong-lab-20.net:8446/default"],
+      #       "ssl_verify": false,
+      #       "consumer_claim": ["email"],
+      #       "redirect_uri": ["https://ald-local-ee.kong-lab-20.net:8447/default/auth"],
+      #       "forbidden_redirect_uri": ["https://ald-local-ee.kong-lab-20.net:8446/unauthorized"],
+      #       "client_secret": ["suWsSZ18p3hGATXIdXxVJMtNukYm8geE"],
+      #       "issuer": "https://ald-keycloak.kong-lab-20.net/auth/realms/master",
+      #       "logout_methods": ["GET"],
+      #       "login_redirect_mode": "query"
+      #     }
+
+      ## MISCELLANEOUS
+      KONG_LUA_SSL_TRUSTED_CERTIFICATE: "system"
+      KONG_LUA_PACKAGE_PATH: /opt/conf/?.lua;
+      # KONG_ENFORCE_RBAC: "on"
+
+      # Use this password to login to Kong Manager. Username is kong_admin
+      KONG_PASSWORD: admin
+
+      ## DATABASE ENCRYPTION & KEYRING MANAGEMENT
+      # KONG_KEYRING_ENABLED: on
+      # KONG_KEYRING_STRATEGY: cluster
+      # # Used to encrypt symmetric keys that are generated
+      # KONG_KEYRING_RECOVERY_PUBLIC_KEY: /srv/keyring/cert.pem
+
+    volumes:
+      # Adjust accordingly
+      # - ../letsencrypt/archive/kong-lab-20.net:/srv/shared/server-ssl
+      #- ../cluster:/srv/shared/cluster-ssl
+      - ../keyring:/srv/keyring
+      - ./my-plugin:/opt/conf/
+networks:
+  kong-ee:
+    driver: bridge

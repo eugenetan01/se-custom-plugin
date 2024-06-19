@@ -1,0 +1,4 @@
+--postgres
+--no-cassandra
+--authservice
+

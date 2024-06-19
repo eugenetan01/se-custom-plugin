@@ -1,0 +1,17 @@
+version: "3"
+services:
+  authservice:
+    image: aldredb/auth-service:v1
+    container_name: authservice
+    hostname: authservice
+    restart: on-failure
+    ports:
+      # 30000 - macOS listen port
+      # 3000 - container port
+      - "30000:3000/tcp"
+    environment:
+    - TOKENS=token1,token2,token3
+    - CUSTOMERS=customer1,customer2,customer3
+    # Need to specify this so that the container will run in the same network as Pongo
+    networks:
+      - ${NETWORK_NAME}
